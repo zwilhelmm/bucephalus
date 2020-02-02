@@ -1,43 +1,22 @@
 "use strict";
 
-const co = require("co");
+// Third-party dependencies.
+const _ = require("lodash");
 
-const isGeneratorFunction = fn => {
-  const constructor = fn.constructor;
-  if (!constructor) return false;
-  if (
-    "GeneratorFunction" === constructor.name ||
-    "GeneratorFunction" === constructor.displayName
-  )
-    return true;
-  return (
-    typeof constructor.prototype.next === "function" &&
-    typeof constructor.prototype.throw === "function"
-  );
-};
+const isPromise = obj => _.has(obj, "then") && typeof obj.then === "function";
 
-const isPromise = fn => typeof fn.then === "function";
-
-const isAsyncAwait = fn => fn instanceof (async () => {}).constructor;
-
-const asCallback = fn => {
-  if (isGeneratorFunction(fn))
-    return {
-      ...co(fn),
-      fname: fn.fname || fn.name
-    };
-
+const callbackify = fn => {
   if (isPromise(fn))
-    return {
-      ...cb => fn.then(val => cb(null, val)).catch(err => cb(err)),
-      fname: fn.fname || fn.name
-    };
-
-  if (isAsyncAwait(fn)) return;
+    return _.extend(
+      cb => fn.then(val => cb(null, val)).catch(err => cb(err, null)),
+      {
+        fname: fn.fname || fn.name
+      }
+    );
 
   return fn;
 };
 
 module.exports = {
-  asCallback: asCallback
+  callbackify: callbackify
 };

@@ -1,32 +1,67 @@
 "use strict";
 
-const processOptions = (retries, min, max, factor, random) => {
-  return {
-    retries: retries || parseInt(process.env.RETRIES) || 5,
-    minTimeout: min || parseInt(process.env.MIN) || 50,
-    maxTimeout: max || parseInt(process.env.MAX) || 500,
-    factor: factor || parseInt(process.env.FACTOR) || 2,
-    randomize: random || parseInt(process.env.RANDOMIZE) || true
+const _ = require("lodash");
+const convert = require("./convert.js");
+const retry = require("retry");
+
+const retryFn = (fn, retries, min, max, factor, random) => {
+  const fnCb = convert.callbackify(fn);
+
+  const options = {
+    retries: retries ? retries : parseInt(process.env.RETRIES) || 5,
+    minTimeout: min ? min : 50,
+    maxTimeout: max ? max : 50,
+    factor: factor ? factor : 2,
+    randomize: random ? random : true,
+    forever: false
   };
-};
 
-const retry = (fn, retries, min, max, factor, random) => {
-  const name = fn.fname || fn.name;
+  const wrapper = _.extend(
+    function() {
+      const args = _.initial(arguments);
+      const cb = _.last(arguments);
 
-  const options = processOptions(retries, min, max, factor, random);
+      if (retries === -1) options.forever = true;
 
-  return _.extend(
-    () => {
-      const args = initial(arguments);
-      const cb = last(arguments);
-      
+      const op = retry.operation(options);
+
+      op.attempt(function() {
+        fnCb.apply(
+          undefined,
+          args.concat([
+            function(err, val) {
+              if (!(err && err.noretry) && op.retry(err)) return;
+
+              const e = err ? (err.noretry ? err : op.errors()[0]) : undefined;
+              cb(e, val);
+            }
+          ])
+        );
+      });
     },
     {
-      fname: fn.fname || fn.name
+      fname: fnCb.fname || fnCb.name
     }
   );
+
+  return wrapper;
 };
 
-module.exports = {
-  retry: retry
-};
+const nameBind = (obj, key) =>
+  _.extend(_.bind(obj[key], obj), {
+    fname: obj[key].fname || (obj.fname || obj.name) + "." + key
+  });
+
+const retryWrapper = (fn, retries, min, max, factor, random) =>
+  _.extend(
+    retryFn(fn, retries, min, max, factor, random),
+    _.fromPairs(_.toPairs(fn)),
+    _.fromPairs(
+      _.map(_.functions(fn), k => [
+        k,
+        retryFn(nameBind(fn, k), retries, min, max, factor, random)
+      ])
+    )
+  );
+
+module.exports = retryWrapper;
